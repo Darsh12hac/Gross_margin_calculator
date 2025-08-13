@@ -1,0 +1,148 @@
+                
+--PACKAGE SPECIFICATION
+CREATE OR REPLACE PACKAGE margin_calc_pkg IS
+    FUNCTION f_get_gross_margin (
+        p_name project.project_name%TYPE
+    ) RETURN NUMBER;
+
+    PROCEDURE p_get_gross_percent (
+        p_project_name project.project_name%TYPE
+    );
+
+END margin_calc_pkg;
+/
+
+--PACKAGE BODY
+CREATE OR REPLACE PACKAGE BODY margin_calc_pkg IS
+
+--FINAL FUNCTION
+    FUNCTION f_get_gross_margin (
+        p_name project.project_name%TYPE
+    ) RETURN NUMBER IS
+        v_gross NUMBER;
+    BEGIN
+        WITH project_costs AS (
+            SELECT
+                t.project_name,
+                SUM(t.time_worked * e.ctcphr) AS total_cost
+            FROM
+                     timecard t
+                JOIN employee e ON t.employee_id = e.employee_id
+            GROUP BY
+                t.project_name
+        )
+        SELECT
+            round(((p.sow -((sum(pc.total_cost)))) / p.sow) * 100,
+                  2)
+        INTO v_gross
+        FROM
+                 project_costs pc
+            JOIN project p ON pc.project_name = p.project_name
+        WHERE
+            pc.project_name = p_name
+        GROUP BY
+            pc.project_name,
+            p.sow;
+
+        RETURN v_gross;
+    END f_get_gross_margin;
+
+
+--CALLING THE FUNCTION USING PROCEDURE
+    PROCEDURE p_get_gross_percent (
+        p_project_name project.project_name%TYPE
+    ) IS
+        v_gross        NUMBER;
+        v_project_name VARCHAR2(100) := p_project_name;
+        v_sugg_name    VARCHAR2(2000);
+    BEGIN
+        IF v_project_name IS NULL
+           OR trim(v_project_name) = '' THEN
+            dbms_output.put_line('ERROR: Project name cannot be empty');
+            RETURN;
+        END IF;
+
+        v_gross := f_get_gross_margin(v_project_name);
+        IF v_gross IS NOT NULL THEN
+            dbms_output.put_line('GROSS MARGIN : '
+                                 || v_gross
+                                 || '%');
+        END IF;
+
+    EXCEPTION
+        WHEN no_data_found THEN
+            dbms_output.put_line('Status: Project does not exist in the database.');
+            dbms_output.put_line('Action: Please verify the project name and try again!');
+            
+            INSERT INTO LOG_USER VALUES(SYSDATE,USER,V_PROJECT_NAME,'NO_DATA_FOUND');
+        --INNER BLOCK BEGIN
+            DECLARE
+                v_cnt NUMBER := 0;
+            BEGIN
+                dbms_output.put_line('SUGGESTED NAME: ');
+                FOR i IN (
+                    SELECT
+                        project_name
+                    FROM
+                        project
+                    WHERE
+                        upper(project_name) LIKE '%'
+                                                 || upper(v_project_name)
+                                                 || '%'
+                ) LOOP
+                    v_cnt := v_cnt + 1;
+                    dbms_output.put_line(v_cnt
+                                         || '. '
+                                         || i.project_name);
+                END LOOP;
+                
+                IF V_CNT =0 
+                THEN
+                FOR i IN (
+                    SELECT
+                        project_name
+                    FROM
+                        project
+                    WHERE
+                        upper(project_name) LIKE '%'
+                                                 || upper(v_project_name)
+                                                 || '%'
+                ) LOOP
+                    v_cnt := v_cnt + 1;
+                    dbms_output.put_line(v_cnt
+                                         || '. '
+                                         || i.project_name);
+                END LOOP;
+                END IF;
+                
+                IF v_cnt =0 then
+                raise no_data_found;
+                end if;
+
+            EXCEPTION
+                WHEN no_data_found THEN
+                    dbms_output.put_line('No similar project names found.');
+                WHEN OTHERS THEN
+                    dbms_output.put_line('Unable to suggest alternative names.');
+            END;
+        --INNER BLOCK END
+
+        WHEN OTHERS THEN
+            dbms_output.put_line('Status: An unexpected system error occurred.');
+            dbms_output.put_line('Action: Please try again later!');
+            dbms_output.put_line('Error Code: '
+                                 || sqlcode
+                                 || ' - '
+                                 || sqlerrm);
+        INSERT INTO LOG_USER VALUES(SYSDATE,USER,V_PROJECT_NAME,'ERROR'); 
+    END p_get_gross_percent;
+
+END margin_calc_pkg;
+/
+
+
+--CALLING PROCEDURE 
+EXEC MARGIN_CALC_PKG.P_GET_GROSS_PERCENT('helen');
+EXEC MARGIN_CALC_PKG.P_GET_GROSS_PERCENT('Helena Agri DBA Support Service');
+set serveroutput on;
+----------------------------------------------------------------------------------------
